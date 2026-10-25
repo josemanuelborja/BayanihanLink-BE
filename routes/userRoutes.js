@@ -3,12 +3,19 @@
 
 const express = require("express");
 const User = require("../models/User");
+const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
 
 // GET /api/users/:id
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireAuth, async (req, res) => {
   try {
+    if (req.userId !== req.params.id && req.user.role !== "ADMIN") {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ error: "Invalid user id." });
+    }
     const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ error: "User not found." });
@@ -31,10 +38,14 @@ router.get("/:id", async (req, res) => {
 });
 
 // PUT /api/users/:id — saves the changes made on the Edit Profile screen.
-// The app sends the full form (fullName, email, contactNumber, address),
-// so we replace those fields with whatever came in.
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireAuth, async (req, res) => {
   try {
+    if (req.userId !== req.params.id) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ error: "Invalid user id." });
+    }
     const { fullName, email, contactNumber, address } = req.body;
 
     // Simple validation, same step-by-step style as the other routes.

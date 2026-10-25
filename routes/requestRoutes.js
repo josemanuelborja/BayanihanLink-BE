@@ -9,7 +9,7 @@ const fs = require("fs");
 const Request = require("../models/Request");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
-const { requireAuth, requireAdmin, requireOwnerOrAdmin } = require("../middleware/auth");
+const { requireAuth, requireAdmin } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -27,7 +27,11 @@ const upload = multer({
       cb(null, UPLOADS_FOLDER);
     },
     filename: function (req, file, cb) {
-      const extension = path.extname(file.originalname) || ".jpg";
+      const extension = path.extname(file.originalname).toLowerCase() || ".jpg";
+      const allowedExt = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
+      if (!allowedExt.includes(extension)) {
+        return cb(new Error("Only image files are allowed."));
+      }
       cb(null, "evidence-" + Date.now() + "-" + Math.round(Math.random() * 100000) + extension);
     }
   }),
@@ -76,7 +80,19 @@ function toSafeRequest(request) {
 // else arrives as normal text fields.
 //
 // If no picture is sent, evidenceImage is just "" and everything still works.
-router.post("/", upload.single("evidenceImage"), async (req, res) => {
+router.post("/", (req, res, next) => {
+  upload.single("evidenceImage")(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: "File too large. Maximum size is 5MB." });
+      }
+      return res.status(400).json({ error: err.message });
+    } else if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const {
       userId, disasterType, category, categories, itemNeeded,
@@ -99,7 +115,9 @@ router.post("/", upload.single("evidenceImage"), async (req, res) => {
           categoryList = [parsed];
         }
       } catch (e) {
-        categoryList = categories.split(",").map(c => c.trim()).filter(Boolean);
+        if (categories.trim()) {
+          categoryList = categories.split(",").map(c => c.trim()).filter(Boolean);
+        }
       }
     }
     if (categoryList.length === 0 && category) {
@@ -174,7 +192,6 @@ router.get("/", async (req, res) => {
 
 // GET /api/requests/user/:userId
 // Returns every request a specific user has submitted, NEWEST FIRST
-// (this is what "My Requests" and the Home screen's stats are built from).
 router.get("/user/:userId", async (req, res) => {
   try {
     const requests = await Request.find({ userId: req.params.userId }).sort({ createdAt: -1 });
@@ -186,9 +203,12 @@ router.get("/user/:userId", async (req, res) => {
 });
 
 // GET /api/requests/:id
-// Returns one request's full details (used by RequestDetailsScreen.kt).
+// Returns one request's full details
 router.get("/:id", async (req, res) => {
   try {
+    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ error: "Invalid request id." });
+    }
     const request = await Request.findById(req.params.id);
     if (!request) {
       return res.status(404).json({ error: "Request not found." });
@@ -201,8 +221,11 @@ router.get("/:id", async (req, res) => {
 });
 
 // PUT/PATCH /api/requests/:id/status - Admin updates request status/urgency/timeline
-router.put("/:id/status", async (req, res) => {
+router.put("/:id/status", requireAdmin, async (req, res) => {
   try {
+    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ error: "Invalid request id." });
+    }
     const { status, urgency, currentTimelineStep } = req.body;
     const request = await Request.findById(req.params.id);
     if (!request) {
@@ -250,8 +273,11 @@ router.put("/:id/status", async (req, res) => {
   }
 });
 
-router.patch("/:id/status", async (req, res) => {
+router.patch("/:id/status", requireAdmin, async (req, res) => {
   try {
+    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ error: "Invalid request id." });
+    }
     const { status, urgency, currentTimelineStep } = req.body;
     const request = await Request.findById(req.params.id);
     if (!request) {

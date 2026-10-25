@@ -160,6 +160,9 @@ router.post("/change-password", async (req, res) => {
     if (newPassword.length < 6) {
       return res.status(400).json({ error: "New password must be at least 6 characters." });
     }
+    if (!userId.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ error: "Invalid user id." });
+    }
 
     const user = await User.findById(userId);
     if (!user) {
@@ -173,6 +176,7 @@ router.post("/change-password", async (req, res) => {
     }
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.authToken = generateToken();
     await user.save();
 
     res.json({ message: "Password changed successfully." });
@@ -237,13 +241,13 @@ router.post("/send-reset-code", async (req, res) => {
 router.get("/verify-email", async (req, res) => {
   try {
     const token = req.query.token;
-    if (!token) {
+    if (!token || typeof token !== "string" || token.trim() === "") {
       return res.status(400).send("Missing verification token.");
     }
 
-    const user = await User.findOne({ verificationToken: token });
+    const user = await User.findOne({ verificationToken: token.trim() });
     if (!user) {
-      return res.status(404).send("This verification link is not valid.");
+      return res.status(404).send("This verification link is not valid or has already been used.");
     }
 
     user.isVerified = true;
@@ -261,6 +265,32 @@ router.get("/verify-email", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).send("Something went wrong while verifying the email.");
+  }
+});
+
+router.post("/verify-email", async (req, res) => {
+  try {
+    const token = req.query.token || req.body.token;
+    if (!token || typeof token !== "string" || token.trim() === "") {
+      return res.status(400).json({ error: "Missing verification token." });
+    }
+
+    const user = await User.findOne({ verificationToken: token.trim() });
+    if (!user) {
+      return res.status(404).json({ error: "This verification link is not valid or has already been used." });
+    }
+
+    user.isVerified = true;
+    user.verificationToken = "";
+    if (!user.authToken) {
+      user.authToken = generateToken();
+    }
+    await user.save();
+
+    res.json({ message: "Email verified successfully." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Something went wrong while verifying the email." });
   }
 });
 
@@ -319,6 +349,7 @@ router.post("/reset-password", async (req, res) => {
 
     // Hash it the same way Register and Change Password do.
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.authToken = generateToken();
     await user.save();
 
     // The code has been used, so delete it.
