@@ -7,6 +7,9 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const Request = require("../models/Request");
+const User = require("../models/User");
+const Notification = require("../models/Notification");
+const { requireAuth, requireAdmin, requireOwnerOrAdmin } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -41,16 +44,22 @@ const upload = multer({
 
 // Turns a Request document into the shape the Android app expects.
 function toSafeRequest(request) {
+  const categories = request.categories && request.categories.length > 0
+    ? request.categories
+    : (request.category ? [request.category] : []);
+
   return {
     id: request._id,
     userId: request.userId,
     disasterType: request.disasterType,
-    category: request.category,
+    category: request.category || categories[0] || "",
+    categories: categories,
     itemNeeded: request.itemNeeded,
     quantity: request.quantity,
     unit: request.unit,
-    description: request.description,
+    description: request.description || "",
     personsAffected: request.personsAffected,
+    location: request.location || "",
     // Just the file name. The app adds the full address
     // (e.g. http://10.0.2.2:3000/uploads/...) when it shows the picture.
     evidenceImage: request.evidenceImage || "",
@@ -70,33 +79,96 @@ function toSafeRequest(request) {
 router.post("/", upload.single("evidenceImage"), async (req, res) => {
   try {
     const {
-      userId, disasterType, category, itemNeeded,
-      quantity, unit, description, personsAffected
+      userId, disasterType, category, categories, itemNeeded,
+      quantity, unit, description, personsAffected, location
     } = req.body;
 
-    if (!userId || !disasterType || !category || !itemNeeded || !quantity || !unit || !personsAffected) {
+    if (!userId || !disasterType || !itemNeeded || !quantity || !unit || !personsAffected) {
       return res.status(400).json({ error: "Missing required fields." });
+    }
+
+    let categoryList = [];
+    if (Array.isArray(categories)) {
+      categoryList = categories.filter(Boolean);
+    } else if (typeof categories === "string") {
+      try {
+        const parsed = JSON.parse(categories);
+        if (Array.isArray(parsed)) {
+          categoryList = parsed.filter(Boolean);
+        } else if (parsed) {
+          categoryList = [parsed];
+        }
+      } catch (e) {
+        categoryList = categories.split(",").map(c => c.trim()).filter(Boolean);
+      }
+    }
+    if (categoryList.length === 0 && category) {
+      categoryList = [category];
+    }
+    if (categoryList.length === 0) {
+      return res.status(400).json({ error: "Missing required fields." });
+    }
+
+    // Verify user exists and is verified
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+    if (!user.isVerified) {
+      return res.status(403).json({ error: "Please verify your email before submitting a request." });
     }
 
     const newRequest = await Request.create({
       userId,
       disasterType,
-      category,
+      category: categoryList[0],
+      categories: categoryList,
       itemNeeded,
       quantity,
       unit,
       description: description || "",
       personsAffected: Number(personsAffected),
+      location: location || user.address || "",
       // multer already saved the picture and gave us its file name.
       evidenceImage: req.file ? req.file.filename : "",
       // urgency, status, and currentTimelineStep all use their defaults
       // (NORMAL, PENDING, 1) — an administrator would update these later.
     });
 
+    try {
+      await Notification.create({
+        userId: user._id,
+        type: "REQUEST_SUBMITTED",
+        title: "Request Submitted",
+        message: "Your assistance request has been submitted and is pending verification.",
+        requestId: newRequest._id,
+        contentType: "REQUEST",
+        targetId: newRequest._id.toString()
+      });
+    } catch (e) {
+      console.error("Failed to create notification:", e.message);
+    }
+
     res.status(201).json(toSafeRequest(newRequest));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Something went wrong while submitting the request." });
+  }
+});
+
+// GET /api/requests
+// Returns all requests (for donor needs board). Can filter by status.
+router.get("/", async (req, res) => {
+  try {
+    const { status, urgency } = req.query;
+    const filter = {};
+    if (status) filter.status = status;
+    if (urgency) filter.urgency = urgency;
+    const requests = await Request.find(filter).sort({ createdAt: -1 });
+    res.json(requests.map(toSafeRequest));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Something went wrong while fetching requests." });
   }
 });
 
@@ -125,6 +197,105 @@ router.get("/:id", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Something went wrong while fetching the request." });
+  }
+});
+
+// PUT/PATCH /api/requests/:id/status - Admin updates request status/urgency/timeline
+router.put("/:id/status", async (req, res) => {
+  try {
+    const { status, urgency, currentTimelineStep } = req.body;
+    const request = await Request.findById(req.params.id);
+    if (!request) {
+      return res.status(404).json({ error: "Request not found." });
+    }
+
+    if (status) request.status = status;
+    if (urgency) request.urgency = urgency;
+    if (currentTimelineStep !== undefined && currentTimelineStep !== null) {
+      request.currentTimelineStep = Number(currentTimelineStep);
+    }
+
+    await request.save();
+
+    try {
+      let title = "Request Updated";
+      let message = "Your request has been updated.";
+      if (status === "VERIFIED") {
+        title = "Request Verified";
+        message = "Your request has been verified by the administrator and posted to the Needs Board.";
+      } else if (status === "ASSISTED") {
+        title = "Assistance Update";
+        message = "Your request is now marked as assisted.";
+      } else if (status === "COMPLETED") {
+        title = "Request Completed";
+        message = "Your request has been successfully completed.";
+      }
+      await Notification.create({
+        userId: request.userId,
+        type: "REQUEST_STATUS_UPDATE",
+        title: title,
+        message: message,
+        requestId: request._id,
+        contentType: "REQUEST",
+        targetId: request._id.toString()
+      });
+    } catch (e) {
+      console.error("Failed to create notification:", e.message);
+    }
+
+    res.json(toSafeRequest(request));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Something went wrong while updating the request." });
+  }
+});
+
+router.patch("/:id/status", async (req, res) => {
+  try {
+    const { status, urgency, currentTimelineStep } = req.body;
+    const request = await Request.findById(req.params.id);
+    if (!request) {
+      return res.status(404).json({ error: "Request not found." });
+    }
+
+    if (status) request.status = status;
+    if (urgency) request.urgency = urgency;
+    if (currentTimelineStep !== undefined && currentTimelineStep !== null) {
+      request.currentTimelineStep = Number(currentTimelineStep);
+    }
+
+    await request.save();
+
+    try {
+      let title = "Request Updated";
+      let message = "Your request has been updated.";
+      if (status === "VERIFIED") {
+        title = "Request Verified";
+        message = "Your request has been verified by the administrator and posted to the Needs Board.";
+      } else if (status === "ASSISTED") {
+        title = "Assistance Update";
+        message = "Your request is now marked as assisted.";
+      } else if (status === "COMPLETED") {
+        title = "Request Completed";
+        message = "Your request has been successfully completed.";
+      }
+      await Notification.create({
+        userId: request.userId,
+        type: "REQUEST_STATUS_UPDATE",
+        title: title,
+        message: message,
+        requestId: request._id,
+        contentType: "REQUEST",
+        targetId: request._id.toString()
+      });
+    } catch (e) {
+      console.error("Failed to create notification:", e.message);
+    }
+
+    res.json(toSafeRequest(request));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Something went wrong while updating the request." });
   }
 });
 

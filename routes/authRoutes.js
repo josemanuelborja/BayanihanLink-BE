@@ -6,6 +6,7 @@ const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const User = require("../models/User");
 const nodemailer = require("nodemailer");
+const { generateToken } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -38,7 +39,9 @@ function toSafeUser(user) {
     contactNumber: user.contactNumber,
     address: user.address,
     accountType: user.accountType,
-    isVerified: !!user.isVerified
+    isVerified: !!user.isVerified,
+    role: user.role || "USER",
+    authToken: user.authToken || ""
   };
 }
 
@@ -72,6 +75,8 @@ router.post("/register", async (req, res) => {
     // A random token used only for the verification link.
     const verificationToken = crypto.randomBytes(24).toString("hex");
 
+    const authToken = generateToken();
+
     const newUser = await User.create({
       fullName,
       email,
@@ -80,7 +85,9 @@ router.post("/register", async (req, res) => {
       address,
       accountType,
       isVerified: false,
-      verificationToken: verificationToken
+      verificationToken: verificationToken,
+      authToken: authToken,
+      role: "USER"
     });
 
     // Email the verification link. If SMTP isn't set up yet we print it in the
@@ -125,6 +132,15 @@ router.post("/login", async (req, res) => {
     const passwordMatches = await bcrypt.compare(password, user.passwordHash);
     if (!passwordMatches) {
       return res.status(401).json({ error: "Invalid email or password." });
+    }
+
+    if (!user.isVerified) {
+      return res.status(403).json({ error: "Please verify your email before logging in." });
+    }
+
+    if (!user.authToken) {
+      user.authToken = generateToken();
+      await user.save();
     }
 
     res.json(toSafeUser(user));
@@ -232,6 +248,9 @@ router.get("/verify-email", async (req, res) => {
 
     user.isVerified = true;
     user.verificationToken = "";
+    if (!user.authToken) {
+      user.authToken = generateToken();
+    }
     await user.save();
 
     res.send(

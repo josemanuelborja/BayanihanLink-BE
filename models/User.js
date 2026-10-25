@@ -17,6 +17,16 @@ const userSchema = new mongoose.Schema({
   // The random token that goes in the verification link.
   verificationToken: { type: String, default: "" },
 
+  // Simple auth token for API access (issued on login/register)
+  authToken: { type: String, default: "" },
+
+  // Role for authorization (admin can approve requests/offers)
+  role: {
+    type: String,
+    enum: ["USER", "ADMIN"],
+    default: "USER"
+  },
+
   // Matches the two account types from the Register screen in the app.
   accountType: {
     type: String,

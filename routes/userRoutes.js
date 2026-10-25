@@ -20,7 +20,9 @@ router.get("/:id", async (req, res) => {
       email: user.email,
       contactNumber: user.contactNumber,
       address: user.address,
-      accountType: user.accountType
+      accountType: user.accountType,
+      isVerified: !!user.isVerified,
+      role: user.role || "USER"
     });
   } catch (error) {
     console.error(error);
@@ -76,7 +78,9 @@ router.put("/:id", async (req, res) => {
       email: user.email,
       contactNumber: user.contactNumber,
       address: user.address,
-      accountType: user.accountType
+      accountType: user.accountType,
+      isVerified: !!user.isVerified,
+      role: user.role || "USER"
     });
   } catch (error) {
     console.error(error);

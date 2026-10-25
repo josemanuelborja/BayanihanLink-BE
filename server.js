@@ -13,6 +13,8 @@ const path = require("path");
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const requestRoutes = require("./routes/requestRoutes");
+const offerRoutes = require("./routes/offerRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 
 const app = express();
 
@@ -29,6 +31,8 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/requests", requestRoutes);
+app.use("/api/offers", offerRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // A simple route just to check the server is alive, by visiting it in a browser.
 app.get("/", (req, res) => {

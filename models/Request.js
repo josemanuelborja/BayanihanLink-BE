@@ -9,12 +9,14 @@ const requestSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
   disasterType: { type: String, required: true },   // "Flood", "Typhoon", "Fire", "Earthquake", "Other"
-  category: { type: String, required: true },        // "Food", "Drinking Water", "Medicine", etc.
+  category: { type: String, required: false },        // "Food", "Drinking Water", "Medicine", etc. (kept for backward compat)
+  categories: { type: [String], default: [] },        // Support multiple categories from Android
   itemNeeded: { type: String, required: true },       // e.g. "Rice (5kg sacks)"
   quantity: { type: String, required: true },         // e.g. "10"
   unit: { type: String, required: true },             // e.g. "packs"
   description: { type: String, default: "" },
   personsAffected: { type: Number, required: true },
+  location: { type: String, default: "" },
 
   // The picture the citizen uploaded as proof of the disaster. We only store
   // the filename (e.g. "evidence-1712345.jpg"), not the whole path, and the
