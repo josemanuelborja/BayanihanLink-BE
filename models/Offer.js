@@ -1,3 +1,5 @@
+// Offer model
+
 const mongoose = require("mongoose");
 
 const offerSchema = new mongoose.Schema({
@@ -6,11 +8,7 @@ const offerSchema = new mongoose.Schema({
   quantityOffered: { type: String, required: true },
   unit: { type: String, default: "" },
   message: { type: String, default: "" },
-  status: {
-    type: String,
-    enum: ["PENDING", "ACCEPTED", "REJECTED"],
-    default: "PENDING"
-  }
+  status: { type: String, enum: ["PENDING", "ACCEPTED", "REJECTED"], default: "PENDING" }
 }, {
   timestamps: true
 });
