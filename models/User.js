@@ -11,7 +11,7 @@ const userSchema = new mongoose.Schema({
   isVerified: { type: Boolean, default: false },
   verificationToken: { type: String, default: "" },
   authToken: { type: String, default: "" },
-  role: { type: String, enum: ["USER", "ADMIN"], default: "USER" },
+  role: { type: String, enum: ["USER", "ADMIN", "OFFICER"], default: "USER" },
   accountType: { type: String, enum: ["AFFECTED_INDIVIDUAL", "DONOR_VOLUNTEER"], required: true }
 }, {
   timestamps: true
