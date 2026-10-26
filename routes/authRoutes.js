@@ -100,7 +100,7 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ error: "Email and password are required." });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: new RegExp("^" + email + "$", "i") });
     if (!user) {
       return res.status(401).json({ error: "Invalid email or password." });
     }

@@ -7,6 +7,17 @@ const { requireAuth, requireAdmin } = require("../middleware/auth");
 
 const router = express.Router();
 
+// Get all offers for admin
+router.get("/admin/all", requireAdmin, async (req, res) => {
+  try {
+    const offers = await Offer.find().sort({ createdAt: -1 });
+    res.json(offers);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Something went wrong while fetching offers." });
+  }
+});
+
 // Create offer
 router.post("/", requireAuth, async (req, res) => {
   try {
