@@ -76,11 +76,13 @@ router.post("/register", async (req, res) => {
         from: process.env.SMTP_USER || "no-reply@bayanihanlink.com",
         to: user.email,
         subject: "Verify your BayanihanLink account",
-        text: "Welcome! Please verify your account by opening this link:\n\n" + link
+        text: "Welcome! Please verify your account by opening this link:\n\n" + link,
+        html: "<div style='font-family: Arial, sans-serif; padding: 20px;'><h2>Welcome to BayanihanLink!</h2><p>Please verify your account by clicking the link below:</p><a href='" + link + "' style='display: inline-block; padding: 10px 20px; background-color: #2B49CC; color: white; text-decoration: none; border-radius: 5px;'>Verify Email</a><p>Or paste this link into your browser:</p><p><a href='" + link + "'>" + link + "</a></p></div>"
       });
-      console.log("Verification link sent to " + user.email);
+      console.log("Verification email successfully sent to " + user.email);
     } catch (e) {
-      console.log("Could not send verification email. Link:");
+      console.error("Could not send verification email:", e.message);
+      console.log("Fallback verification link:");
       console.log(link);
     }
 
