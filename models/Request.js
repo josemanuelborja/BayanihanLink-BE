@@ -3,6 +3,7 @@
 const mongoose = require("mongoose");
 
 const requestSchema = new mongoose.Schema({
+  referenceNo: { type: String, unique: true, sparse: true },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   disasterType: { type: String, required: true },
   category: { type: String, required: false },

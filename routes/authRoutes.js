@@ -36,6 +36,10 @@ function toSafeUser(user) {
   };
 }
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function buildVerifyLink(user) {
   const baseUrl = process.env.BASE_URL || "http://localhost:3000";
   return baseUrl + "/api/auth/verify-email?token=" + user.verificationToken;
@@ -100,13 +104,21 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ error: "Email and password are required." });
     }
 
-    const user = await User.findOne({ email: new RegExp("^" + email + "$", "i") });
-    if (!user) {
+    const users = await User.find({ email: new RegExp("^" + escapeRegex(email) + "$", "i") });
+    if (users.length === 0) {
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
-    const match = await bcrypt.compare(password, user.passwordHash);
-    if (!match) {
+    // More than one account can share an email that only differs by letter
+    // case, so check the password against each matching account.
+    let user = null;
+    for (const candidate of users) {
+      if (await bcrypt.compare(password, candidate.passwordHash)) {
+        user = candidate;
+        break;
+      }
+    }
+    if (!user) {
       return res.status(401).json({ error: "Invalid email or password." });
     }
 

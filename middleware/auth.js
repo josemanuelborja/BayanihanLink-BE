@@ -50,4 +50,18 @@ async function requireAdmin(req, res, next) {
   }
 }
 
-module.exports = { generateToken, requireAuth, requireAdmin };
+async function requireAdminOrOfficer(req, res, next) {
+  try {
+    requireAuth(req, res, () => {
+      if (!req.user || (req.user.role !== "ADMIN" && req.user.role !== "OFFICER")) {
+        return res.status(403).json({ error: "Admin or DSWD officer access required." });
+      }
+      next();
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Authorization failed." });
+  }
+}
+
+module.exports = { generateToken, requireAuth, requireAdmin, requireAdminOrOfficer };

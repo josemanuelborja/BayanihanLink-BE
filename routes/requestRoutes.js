@@ -10,6 +10,8 @@ const Request = require("../models/Request");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
 const { requireAuth, requireAdmin } = require("../middleware/auth");
+const { nextReference } = require("../utils/references");
+const { notifyAdmins, notifyUser } = require("../utils/adminNotifications");
 
 const router = express.Router();
 
@@ -46,15 +48,41 @@ const upload = multer({
   }
 });
 
+// Helper to check if string is valid MongoDB ObjectId or a custom human-readable ID (like BL-000301 or DO-000089)
+function isValidId(id) {
+  if (!id) return false;
+  if (/^[0-9a-fA-F]{24}$/.test(id)) return true;
+  if (/^(BL|DO)-\d+$/.test(id)) return true;
+  return false;
+}
+
+// Helper to query request flexibly by ObjectId or human readable ID
+async function findRequestFlex(idStr) {
+  if (!idStr) return null;
+  const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(idStr);
+  return await Request.findOne({
+    $or: [
+      { referenceNo: idStr },
+      { requestId: idStr },
+      { id: idStr },
+      ...(isValidObjectId ? [{ _id: idStr }] : [])
+    ]
+  });
+}
+
 // Turns a Request document into the shape the Android app expects.
 function toSafeRequest(request) {
   const categories = request.categories && request.categories.length > 0
     ? request.categories
     : (request.category ? [request.category] : []);
 
+  const requester = request.userId && request.userId.fullName ? request.userId : null;
+
   return {
     id: request._id,
-    userId: request.userId,
+    referenceNo: request.referenceNo || "",
+    userId: requester ? requester._id : request.userId,
+    requesterName: requester ? requester.fullName : "",
     disasterType: request.disasterType,
     category: request.category || categories[0] || "",
     categories: categories,
@@ -137,6 +165,7 @@ router.post("/", (req, res, next) => {
     }
 
     const newRequest = await Request.create({
+      referenceNo: await nextReference("request", "BL"),
       userId,
       disasterType,
       category: categoryList[0],
@@ -167,6 +196,16 @@ router.post("/", (req, res, next) => {
       console.error("Failed to create notification:", e.message);
     }
 
+    // Tell every Admin that a new request needs review.
+    await notifyAdmins({
+      type: "REQUEST_SUBMITTED",
+      title: "New assistance request",
+      message: `Request #${newRequest.referenceNo} from ${user.fullName} is waiting for review.`,
+      requestId: newRequest._id,
+      contentType: "REQUEST",
+      targetId: newRequest._id.toString()
+    });
+
     res.status(201).json(toSafeRequest(newRequest));
   } catch (error) {
     console.error(error);
@@ -182,7 +221,9 @@ router.get("/", async (req, res) => {
     const filter = {};
     if (status) filter.status = status;
     if (urgency) filter.urgency = urgency;
-    const requests = await Request.find(filter).sort({ createdAt: -1 });
+    const requests = await Request.find(filter)
+      .sort({ createdAt: -1 })
+      .populate("userId", "fullName");
     res.json(requests.map(toSafeRequest));
   } catch (error) {
     console.error(error);
@@ -194,7 +235,9 @@ router.get("/", async (req, res) => {
 // Returns every request a specific user has submitted, NEWEST FIRST
 router.get("/user/:userId", async (req, res) => {
   try {
-    const requests = await Request.find({ userId: req.params.userId }).sort({ createdAt: -1 });
+    const requests = await Request.find({ userId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .populate("userId", "fullName");
     res.json(requests.map(toSafeRequest));
   } catch (error) {
     console.error(error);
@@ -206,13 +249,14 @@ router.get("/user/:userId", async (req, res) => {
 // Returns one request's full details
 router.get("/:id", async (req, res) => {
   try {
-    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({ error: "Invalid request id." });
     }
-    const request = await Request.findById(req.params.id);
+    const request = await findRequestFlex(req.params.id);
     if (!request) {
       return res.status(404).json({ error: "Request not found." });
     }
+    await request.populate("userId", "fullName");
     res.json(toSafeRequest(request));
   } catch (error) {
     console.error(error);
@@ -223,11 +267,11 @@ router.get("/:id", async (req, res) => {
 // PUT/PATCH /api/requests/:id/status - Admin updates request status/urgency/timeline
 router.put("/:id/status", requireAdmin, async (req, res) => {
   try {
-    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({ error: "Invalid request id." });
     }
     const { status, urgency, currentTimelineStep } = req.body;
-    const request = await Request.findById(req.params.id);
+    const request = await findRequestFlex(req.params.id);
     if (!request) {
       return res.status(404).json({ error: "Request not found." });
     }
@@ -265,6 +309,16 @@ router.put("/:id/status", requireAdmin, async (req, res) => {
     } catch (e) {
       console.error("Failed to create notification:", e.message);
     }
+
+    // Record the Admin's own change so it appears in the Admin notification bell.
+    await notifyUser(req.userId, {
+      type: "REQUEST_STATUS_UPDATE",
+      title: "Request status updated",
+      message: `Request #${request.referenceNo || request._id} is now ${request.status}.`,
+      requestId: request._id,
+      contentType: "REQUEST",
+      targetId: request._id.toString()
+    });
 
     res.json(toSafeRequest(request));
   } catch (error) {
@@ -275,11 +329,11 @@ router.put("/:id/status", requireAdmin, async (req, res) => {
 
 router.patch("/:id/status", requireAdmin, async (req, res) => {
   try {
-    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({ error: "Invalid request id." });
     }
     const { status, urgency, currentTimelineStep } = req.body;
-    const request = await Request.findById(req.params.id);
+    const request = await findRequestFlex(req.params.id);
     if (!request) {
       return res.status(404).json({ error: "Request not found." });
     }
@@ -317,6 +371,16 @@ router.patch("/:id/status", requireAdmin, async (req, res) => {
     } catch (e) {
       console.error("Failed to create notification:", e.message);
     }
+
+    // Record the Admin's own change so it appears in the Admin notification bell.
+    await notifyUser(req.userId, {
+      type: "REQUEST_STATUS_UPDATE",
+      title: "Request status updated",
+      message: `Request #${request.referenceNo || request._id} is now ${request.status}.`,
+      requestId: request._id,
+      contentType: "REQUEST",
+      targetId: request._id.toString()
+    });
 
     res.json(toSafeRequest(request));
   } catch (error) {
